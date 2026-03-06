@@ -12,6 +12,7 @@ import {
 const PORT = Number(process.env.PORT || 3000);
 const API_KEY = process.env.API_KEY || "";
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "*";
+const FRONTEND_APP_URL = process.env.FRONTEND_APP_URL || "";
 
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
@@ -64,6 +65,25 @@ if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
 assertValidVapidSubject(VAPID_SUBJECT);
 
 webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+
+function resolveFrontendAppUrl(): string {
+  const candidate = String(FRONTEND_APP_URL || FRONTEND_ORIGIN || "").trim();
+  if (!candidate || candidate === "*") return "/";
+
+  try {
+    const url = new URL(candidate);
+    url.hash = "";
+    url.search = "";
+    if (!url.pathname.endsWith("/")) {
+      url.pathname = `${url.pathname}/`;
+    }
+    return url.toString();
+  } catch {
+    return "/";
+  }
+}
+
+const NOTIFICATION_APP_URL = resolveFrontendAppUrl();
 
 const app = express();
 app.use(cors({ origin: FRONTEND_ORIGIN === "*" ? true : FRONTEND_ORIGIN }));
@@ -162,7 +182,7 @@ app.post("/api/chat/notify", requireApiKey, async (req, res) => {
     const payload = JSON.stringify({
       title: `New message from ${from === "ru" ? "Ru" : from === "kiki" ? "Kiki" : from}`,
       body: text.length > 100 ? `${text.slice(0, 100)}…` : text,
-      url: "/",
+      url: NOTIFICATION_APP_URL,
       icon: "maroon.png",
       badge: "maroon.png",
       timestamp: Date.now(),
