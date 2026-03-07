@@ -8,6 +8,13 @@ import {
   removeSubscription,
   upsertSubscription,
 } from "./subscriptionStore.js";
+import {
+  getDefaultPreferences,
+  getUserPreferences,
+  isKnownNotificationType,
+  type NotificationType,
+  updateUserPreferences,
+} from "./preferencesStore.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const API_KEY = process.env.API_KEY || "";
@@ -84,6 +91,71 @@ function resolveFrontendAppUrl(): string {
 }
 
 const NOTIFICATION_APP_URL = resolveFrontendAppUrl();
+
+function displayNameForUser(userKey: string): string {
+  if (userKey === "ru") return "Ru";
+  if (userKey === "kiki") return "Kiki";
+  return userKey || "Someone";
+}
+
+async function sendNotificationToUser(
+  to: string,
+  type: NotificationType,
+  payloadInput: {
+    title: string;
+    body: string;
+    url?: string;
+  },
+): Promise<{ sent: number; cleaned: number; reason?: string }> {
+  const preferences = await getUserPreferences(to);
+  if (!preferences[type]) {
+    return { sent: 0, cleaned: 0, reason: "disabled-by-preference" };
+  }
+
+  const subscriptions = await getUserSubscriptions(to);
+  if (!subscriptions.length) {
+    return { sent: 0, cleaned: 0, reason: "no-subscriptions" };
+  }
+
+  const payload = JSON.stringify({
+    title: payloadInput.title,
+    body: payloadInput.body,
+    url: payloadInput.url || NOTIFICATION_APP_URL,
+    icon: "maroon.png",
+    badge: "maroon.png",
+    timestamp: Date.now(),
+    type,
+  });
+
+  const invalidEndpoints: string[] = [];
+  let sent = 0;
+
+  for (const subscription of subscriptions) {
+    try {
+      await webpush.sendNotification(subscription, payload);
+      sent += 1;
+    } catch (error: unknown) {
+      const statusCode =
+        typeof error === "object" && error !== null && "statusCode" in error
+          ? Number((error as { statusCode?: number }).statusCode)
+          : 0;
+
+      if (statusCode === 404 || statusCode === 410) {
+        invalidEndpoints.push(subscription.endpoint);
+        continue;
+      }
+
+      console.error(
+        "Push send failed for subscription:",
+        subscription.endpoint,
+        error,
+      );
+    }
+  }
+
+  await removeInvalidSubscriptions(to, invalidEndpoints);
+  return { sent, cleaned: invalidEndpoints.length };
+}
 
 const app = express();
 app.use(cors({ origin: FRONTEND_ORIGIN === "*" ? true : FRONTEND_ORIGIN }));
@@ -173,54 +245,90 @@ app.post("/api/chat/notify", requireApiKey, async (req, res) => {
   }
 
   try {
-    const subscriptions = await getUserSubscriptions(to);
-    if (!subscriptions.length) {
-      res.json({ ok: true, sent: 0, reason: "no-subscriptions" });
-      return;
-    }
-
-    const payload = JSON.stringify({
-      title: `New message from ${from === "ru" ? "Ru" : from === "kiki" ? "Kiki" : from}`,
+    const result = await sendNotificationToUser(to, "chat", {
+      title: `New message from ${displayNameForUser(from)}`,
       body: text.length > 100 ? `${text.slice(0, 100)}…` : text,
       url: NOTIFICATION_APP_URL,
-      icon: "maroon.png",
-      badge: "maroon.png",
-      timestamp: Date.now(),
     });
 
-    const invalidEndpoints: string[] = [];
-    let sent = 0;
-
-    for (const subscription of subscriptions) {
-      try {
-        await webpush.sendNotification(subscription, payload);
-        sent += 1;
-      } catch (error: unknown) {
-        const statusCode =
-          typeof error === "object" && error !== null && "statusCode" in error
-            ? Number((error as { statusCode?: number }).statusCode)
-            : 0;
-
-        if (statusCode === 404 || statusCode === 410) {
-          invalidEndpoints.push(subscription.endpoint);
-          continue;
-        }
-
-        console.error(
-          "Push send failed for subscription:",
-          subscription.endpoint,
-          error,
-        );
-      }
-    }
-
-    await removeInvalidSubscriptions(to, invalidEndpoints);
-
-    res.json({ ok: true, sent, cleaned: invalidEndpoints.length });
+    res.json({ ok: true, ...result });
   } catch (error) {
     console.error("Notify failed:", error);
     res.status(500).json({ error: "Notify failed." });
   }
+});
+
+app.get("/api/notifications/preferences/:userKey", requireApiKey, async (req, res) => {
+  const userKey = String(req.params?.userKey || "").trim();
+  if (!userKey) {
+    res.status(400).json({ error: "Missing userKey" });
+    return;
+  }
+
+  try {
+    const preferences = await getUserPreferences(userKey);
+    res.json({ userKey, preferences });
+  } catch (error) {
+    console.error("Get preferences failed:", error);
+    res.status(500).json({ error: "Get preferences failed." });
+  }
+});
+
+app.post("/api/notifications/preferences", requireApiKey, async (req, res) => {
+  const userKey = String(req.body?.userKey || "").trim();
+  const preferences = req.body?.preferences;
+
+  if (!userKey || !preferences || typeof preferences !== "object") {
+    res
+      .status(400)
+      .json({ error: "Invalid payload. Expected userKey and preferences object." });
+    return;
+  }
+
+  try {
+    const next = await updateUserPreferences(userKey, preferences);
+    res.json({ ok: true, userKey, preferences: next });
+  } catch (error) {
+    console.error("Update preferences failed:", error);
+    res.status(500).json({ error: "Update preferences failed." });
+  }
+});
+
+app.post("/api/events/notify", requireApiKey, async (req, res) => {
+  const from = String(req.body?.from || "").trim();
+  const to = String(req.body?.to || "").trim();
+  const typeRaw = String(req.body?.type || "").trim();
+  const title = String(req.body?.title || "").trim();
+  const body = String(req.body?.body || "").trim();
+  const url = String(req.body?.url || "").trim();
+
+  if (!from || !to || !typeRaw || !title || !body) {
+    res
+      .status(400)
+      .json({ error: "Invalid payload. Expected from, to, type, title and body." });
+    return;
+  }
+
+  if (!isKnownNotificationType(typeRaw)) {
+    res.status(400).json({ error: "Invalid notification type." });
+    return;
+  }
+
+  try {
+    const result = await sendNotificationToUser(to, typeRaw, {
+      title,
+      body,
+      url: url || NOTIFICATION_APP_URL,
+    });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    console.error("Event notify failed:", error);
+    res.status(500).json({ error: "Event notify failed." });
+  }
+});
+
+app.get("/api/notifications/types", requireApiKey, (_req, res) => {
+  res.json({ defaults: getDefaultPreferences() });
 });
 
 app.listen(PORT, () => {
