@@ -39,6 +39,7 @@ npm run dev
 - Set env vars from `.env.example`.
 
 For GitHub Pages project sites, set:
+
 - `FRONTEND_ORIGIN=https://cyril-bonnet.github.io`
 - `FRONTEND_APP_URL=https://cyril-bonnet.github.io/website/`
 
@@ -52,3 +53,7 @@ For GitHub Pages project sites, set:
 - `POST /api/push/subscribe` body: `{ userKey, subscription }`
 - `POST /api/push/unsubscribe` body: `{ userKey, endpoint }`
 - `POST /api/chat/notify` body: `{ from, to, text, timestamp? }`
+- `GET /api/notifications/preferences/:userKey` get notification preferences
+- `POST /api/notifications/preferences` body: `{ userKey, preferences }`
+- `POST /api/events/notify` body: `{ from, to, type, title, body, url? }`
+- `GET /api/notifications/types` returns default preference values
