@@ -19,6 +19,7 @@ import {
 const PORT = Number(process.env.PORT || 3000);
 const API_KEY = process.env.API_KEY || "";
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "*";
+const FRONTEND_ORIGINS = process.env.FRONTEND_ORIGINS || "";
 const FRONTEND_APP_URL = process.env.FRONTEND_APP_URL || "";
 
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
@@ -92,6 +93,28 @@ function resolveFrontendAppUrl(): string {
 
 const NOTIFICATION_APP_URL = resolveFrontendAppUrl();
 
+function parseAllowedOrigins(): string[] {
+  const candidates = [FRONTEND_ORIGIN, FRONTEND_ORIGINS]
+    .flatMap((value) => String(value || "").split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  const unique = Array.from(new Set(candidates));
+  if (!unique.length) {
+    return ["*"];
+  }
+
+  return unique;
+}
+
+const ALLOWED_ORIGINS = parseAllowedOrigins();
+
+function isOriginAllowed(origin: string | undefined): boolean {
+  if (!origin) return true;
+  if (ALLOWED_ORIGINS.includes("*")) return true;
+  return ALLOWED_ORIGINS.includes(origin);
+}
+
 function displayNameForUser(userKey: string): string {
   if (userKey === "ru") return "Ru";
   if (userKey === "kiki") return "Kiki";
@@ -158,7 +181,18 @@ async function sendNotificationToUser(
 }
 
 const app = express();
-app.use(cors({ origin: FRONTEND_ORIGIN === "*" ? true : FRONTEND_ORIGIN }));
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (isOriginAllowed(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error(`Not allowed by CORS: ${origin}`));
+    },
+  }),
+);
 app.use(express.json({ limit: "256kb" }));
 
 function requireApiKey(
@@ -258,21 +292,25 @@ app.post("/api/chat/notify", requireApiKey, async (req, res) => {
   }
 });
 
-app.get("/api/notifications/preferences/:userKey", requireApiKey, async (req, res) => {
-  const userKey = String(req.params?.userKey || "").trim();
-  if (!userKey) {
-    res.status(400).json({ error: "Missing userKey" });
-    return;
-  }
+app.get(
+  "/api/notifications/preferences/:userKey",
+  requireApiKey,
+  async (req, res) => {
+    const userKey = String(req.params?.userKey || "").trim();
+    if (!userKey) {
+      res.status(400).json({ error: "Missing userKey" });
+      return;
+    }
 
-  try {
-    const preferences = await getUserPreferences(userKey);
-    res.json({ userKey, preferences });
-  } catch (error) {
-    console.error("Get preferences failed:", error);
-    res.status(500).json({ error: "Get preferences failed." });
-  }
-});
+    try {
+      const preferences = await getUserPreferences(userKey);
+      res.json({ userKey, preferences });
+    } catch (error) {
+      console.error("Get preferences failed:", error);
+      res.status(500).json({ error: "Get preferences failed." });
+    }
+  },
+);
 
 app.post("/api/notifications/preferences", requireApiKey, async (req, res) => {
   const userKey = String(req.body?.userKey || "").trim();
@@ -281,7 +319,9 @@ app.post("/api/notifications/preferences", requireApiKey, async (req, res) => {
   if (!userKey || !preferences || typeof preferences !== "object") {
     res
       .status(400)
-      .json({ error: "Invalid payload. Expected userKey and preferences object." });
+      .json({
+        error: "Invalid payload. Expected userKey and preferences object.",
+      });
     return;
   }
 
@@ -305,7 +345,9 @@ app.post("/api/events/notify", requireApiKey, async (req, res) => {
   if (!from || !to || !typeRaw || !title || !body) {
     res
       .status(400)
-      .json({ error: "Invalid payload. Expected from, to, type, title and body." });
+      .json({
+        error: "Invalid payload. Expected from, to, type, title and body.",
+      });
     return;
   }
 
