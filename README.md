@@ -41,7 +41,10 @@ npm run dev
 For GitHub Pages project sites, set:
 
 - `FRONTEND_ORIGIN=https://cyril-bonnet.github.io`
+- `FRONTEND_ORIGINS=https://cyril-bonnet.github.io,http://127.0.0.1:5500,http://localhost:5500`
 - `FRONTEND_APP_URL=https://cyril-bonnet.github.io/website/`
+
+Use `FRONTEND_ORIGINS` for a comma-separated allow-list when you want both production and local dev origins.
 
 `FRONTEND_APP_URL` is used as the notification click target. If omitted, the backend falls back to the origin root.
 
