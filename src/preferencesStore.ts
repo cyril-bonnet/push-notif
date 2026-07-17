@@ -10,7 +10,8 @@ export type NotificationType =
   | "taste"
   | "mood"
   | "status"
-  | "trip";
+  | "date"
+  | "workout";
 
 export type NotificationPreferences = Record<NotificationType, boolean>;
 
@@ -28,7 +29,8 @@ const DEFAULT_PREFERENCES: NotificationPreferences = {
   taste: true,
   mood: true,
   status: true,
-  trip: true,
+  date: true,
+  workout: true,
 };
 
 async function ensureDataFile(): Promise<void> {
@@ -80,7 +82,8 @@ export function normalizePreferences(
     taste: typeof raw.taste === "boolean" ? raw.taste : defaults.taste,
     mood: typeof raw.mood === "boolean" ? raw.mood : defaults.mood,
     status: typeof raw.status === "boolean" ? raw.status : defaults.status,
-    trip: typeof raw.trip === "boolean" ? raw.trip : defaults.trip,
+    date: typeof raw.date === "boolean" ? raw.date : defaults.date,
+    workout: typeof raw.workout === "boolean" ? raw.workout : defaults.workout,
   };
 }
 
@@ -96,7 +99,8 @@ export function isKnownNotificationType(
     "taste",
     "mood",
     "status",
-    "trip",
+    "date",
+    "workout",
   ].includes(value);
 }
 
